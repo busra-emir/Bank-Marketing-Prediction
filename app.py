@@ -1,252 +1,165 @@
 import streamlit as st
-import pandas as pd
 import joblib
-import random
+import pandas as pd
+import numpy as np
+from sklearn.preprocessing import LabelEncoder, StandardScaler
 
-# Import required libraries at the top
-try:
-    import pandas as pd
-    import joblib
-    import random
-except ImportError as e:
-    st.error(f"Required library missing: {e}")
-    st.stop()
-
-st.set_page_config(
-    page_title="BSA Model Interactive Demo",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
-# Custom CSS for styling the sidebar buttons
-st.markdown("""
-<style>
-    .stButton > button {
-        width: 100%;
-        margin-bottom: 10px;
-        border-radius: 5px;
-        background-color: #f0f2f6;
-        color: #000000;
-        text-align: left;
-        padding: 15px;
-    }
-    .stButton > button:hover {
-        background-color: #e0e2e6;
-    }
-    .selected-button > button {
-        background-color: #00acb5;
-        color: white;
-    }
-</style>
-""", unsafe_allow_html=True)
-
-# Load common resources
-@st.cache_data
-def load_data():
-    try:
-        df = pd.read_csv('bank-additional.csv')
-        return df
-    except Exception as e:
-        st.error(f"Error loading data: {e}")
-        return None
-
+# Model ve scaler'ları yükleme
 @st.cache_resource
 def load_model():
     try:
         model = joblib.load('BSA_model.pkl')
         return model
     except Exception as e:
-        st.error(f"Error loading model: {e}")
+        st.error(f"Model yüklenirken hata oluştu: {e}")
         return None
 
-# Sidebar navigation
-st.sidebar.title("Navigation")
-
-# Initialize session state for current page if not exists
-if 'current_page' not in st.session_state:
-    st.session_state.current_page = "Home"
-
-# Navigation buttons
-col1 = st.sidebar.columns(1)[0]
-with col1:
-    if st.button("🏠 Home", key="home", 
-                help="Return to home page",
-                use_container_width=True):
-        st.session_state.current_page = "Home"
-        
-    if st.button("📊 Data Preview", key="data", 
-                help="View dataset preview",
-                use_container_width=True):
-        st.session_state.current_page = "Data Preview"
-        
-    if st.button("📋 Model Details", key="model", 
-                help="View model information",
-                use_container_width=True):
-        st.session_state.current_page = "Model Details"
-        
-    if st.button("⚙️ Make Prediction", key="predict", 
-                help="Make new predictions",
-                use_container_width=True):
-        st.session_state.current_page = "Make Prediction"
-        
-    if st.button("🔍 Ask Model", key="ask", 
-                help="Test model with random samples",
-                use_container_width=True):
-        st.session_state.current_page = "Ask Model"
-
-# Load data and model once
-data = load_data()
-model = load_model()
-
-# Content based on selected page
-if st.session_state.current_page == "Home":
-    st.title("BSA Model Interactive Demo")
-    st.write("This application uses a **Random Forest** model to make predictions based on the **bank-additional.csv** dataset.")
-    
-    st.markdown("""
-    ## Welcome to the BSA Model Demo!
-
-    This application demonstrates a machine learning model for bank customer analysis. You can:
-
-    1. 📊 View and explore the dataset in the **Data Preview** section
-    2. 📋 Learn about the model in the **Model Details** section
-    3. ⚙️ Make predictions with your own input in the **Make Prediction** section
-    4. 🔍 Test the model with random samples in the **Ask Model** section
-
-    Please select a section from the sidebar to get started!
-    """)
-
-elif st.session_state.current_page == "Data Preview":
-    st.title("Data Preview")
-    if data is not None:
-        st.write("Here are the first 5 rows of the dataset:")
-        st.dataframe(data.head())
-        st.subheader("Dataset Summary")
-        st.write(f"Total Rows: {data.shape[0]}, Total Columns: {data.shape[1]}")
-        st.write("Column Information:")
-        st.write(data.dtypes)
-
-elif st.session_state.current_page == "Model Details":
-    st.title("Model Details")
-    st.subheader("Model Information")
-    st.write("The **Random Forest** model was used for this application. Below are the details of the model:")
-    st.text("Model File: BSA_model.pkl")
-    st.text("Model Objective: Predict customer behavior based on banking data.")
-
-    # Display feature importance visualization
-    st.write("### Feature Importance")
-    importance_data = {
-        'Feature': ['euribor3m', 'age', 'job', 'nr.employed', 'campaign', 'education', 
-                   'day_of_week', 'emp.var.rate', 'marital', 'cons.conf.idx'],
-        'Importance': [0.16, 0.15, 0.08, 0.08, 0.08, 0.08, 0.07, 0.04, 0.04, 0.03]
+def prepare_input_data(df):
+    """Veri ön işleme adımlarını gerçekleştirir"""
+    # Kategorik değişkenler için mapping
+    job_mapping = {
+        'admin.': 0, 'blue-collar': 1, 'entrepreneur': 2, 'housemaid': 3,
+        'management': 4, 'retired': 5, 'self-employed': 6, 'services': 7,
+        'student': 8, 'technician': 9, 'unemployed': 10, 'unknown': 11
     }
-    importance_df = pd.DataFrame(importance_data).sort_values('Importance', ascending=True)
-    st.bar_chart(importance_df.set_index('Feature'))
-
-elif st.session_state.current_page == "Make Prediction":
-    st.title("Make a Prediction")
     
-    if data is not None and model is not None:
-        # Create two columns for better layout
-        col1, col2 = st.columns(2)
+    marital_mapping = {'divorced': 0, 'married': 1, 'single': 2}
+    
+    education_mapping = {
+        'basic.4y': 0, 'basic.6y': 1, 'basic.9y': 2, 'high.school': 3,
+        'illiterate': 4, 'professional.course': 5, 'university.degree': 6, 'unknown': 7
+    }
+    
+    default_mapping = {'no': 0, 'yes': 1}
+    housing_mapping = {'no': 0, 'yes': 1}
+    loan_mapping = {'no': 0, 'yes': 1}
+    contact_mapping = {'cellular': 0, 'telephone': 1, 'unknown': 2}
+    
+    month_mapping = {
+        'jan': 0, 'feb': 1, 'mar': 2, 'apr': 3, 'may': 4, 'jun': 5,
+        'jul': 6, 'aug': 7, 'sep': 8, 'oct': 9, 'nov': 10, 'dec': 11
+    }
+    
+    day_mapping = {'mon': 0, 'tue': 1, 'wed': 2, 'thu': 3, 'fri': 4}
+    poutcome_mapping = {'failure': 0, 'nonexistent': 1, 'success': 2, 'unknown': 3}
+
+    # Kategorik değişkenleri dönüştür
+    df['job'] = df['job'].map(job_mapping)
+    df['marital'] = df['marital'].map(marital_mapping)
+    df['education'] = df['education'].map(education_mapping)
+    df['default'] = df['default'].map(default_mapping)
+    df['housing'] = df['housing'].map(housing_mapping)
+    df['loan'] = df['loan'].map(loan_mapping)
+    df['contact'] = df['contact'].map(contact_mapping)
+    df['month'] = df['month'].map(month_mapping)
+    df['day_of_week'] = df['day_of_week'].map(day_mapping)
+    df['poutcome'] = df['poutcome'].map(poutcome_mapping)
+
+    # Sayısal değişkenler için scaler
+    scaler = StandardScaler()
+    numerical_cols = ['age', 'campaign', 'pdays', 'previous', 'emp.var.rate',
+                     'cons.price.idx', 'cons.conf.idx', 'euribor3m', 'nr.employed']
+    
+    # Sayısal değişkenleri normalize et
+    df[numerical_cols] = scaler.fit_transform(df[numerical_cols])
+    
+    return df
+
+def main():
+    st.title('Bank Marketing Prediction App')
+    
+    # Load model
+    model = load_model()
+    if model is None:
+        return
+    
+    # Input fields
+    st.subheader('Müşteri Bilgileri')
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        age = st.number_input('Yaş', min_value=18, max_value=100, value=30)
+        job = st.selectbox('Meslek', options=['admin.', 'blue-collar', 'entrepreneur', 'housemaid', 
+                                            'management', 'retired', 'self-employed', 'services', 
+                                            'student', 'technician', 'unemployed', 'unknown'])
+        marital = st.selectbox('Medeni Durum', options=['married', 'divorced', 'single'])
+        education = st.selectbox('Eğitim', options=['basic.4y', 'basic.6y', 'basic.9y', 'high.school',
+                                                  'illiterate', 'professional.course', 'university.degree', 
+                                                  'unknown'])
+        default = st.selectbox('Kredi Temerrüdü', options=['no', 'yes'])
+        housing = st.selectbox('Konut Kredisi', options=['no', 'yes'])
+        loan = st.selectbox('Kişisel Kredi', options=['no', 'yes'])
         
-        with col1:
-            st.subheader("Primary Features")
-            # Most important features according to the graph
-            euribor3m = st.number_input("Euribor 3 Month Rate", 
-                                      min_value=-5.0, max_value=10.0, value=1.0, step=0.1,
-                                      help="Euro Interbank Offered Rate - 3 month rate")
-            age = st.number_input("Age", min_value=18, max_value=100, value=30)
-            job = st.selectbox("Job", options=["admin.", "blue-collar", "entrepreneur", "housemaid", 
-                                             "management", "retired", "self-employed", "services", 
-                                             "student", "technician", "unemployed", "unknown"])
-            nr_employed = st.number_input("Number of Employees", 
-                                        min_value=1000, max_value=10000, value=5000,
-                                        help="Number of employees - quarterly indicator")
+    with col2:
+        contact = st.selectbox('İletişim Türü', options=['cellular', 'telephone', 'unknown'])
+        month = st.selectbox('Ay', options=['jan', 'feb', 'mar', 'apr', 'may', 'jun',
+                                          'jul', 'aug', 'sep', 'oct', 'nov', 'dec'])
+        day_of_week = st.selectbox('Haftanın Günü', options=['mon', 'tue', 'wed', 'thu', 'fri'])
+        campaign = st.number_input('Kampanya İletişim Sayısı', min_value=1, max_value=50, value=1)
+        pdays = st.number_input('Son İletişimden Bu Yana Geçen Gün', min_value=0, value=0)
+        previous = st.number_input('Önceki Kampanya İletişim Sayısı', min_value=0, value=0)
+        poutcome = st.selectbox('Önceki Kampanya Sonucu', options=['failure', 'nonexistent', 'success', 'unknown'])
+    
+    st.subheader('Ekonomik Göstergeler')
+    col3, col4 = st.columns(2)
+    
+    with col3:
+        emp_var_rate = st.number_input('İstihdam Değişim Oranı', value=0.0, step=0.1)
+        cons_price_idx = st.number_input('Tüketici Fiyat Endeksi', value=93.2, step=0.1)
+        cons_conf_idx = st.number_input('Tüketici Güven Endeksi', value=-36.4, step=0.1)
+    
+    with col4:
+        euribor3m = st.number_input('Euribor 3 Aylık Oran', value=4.857, step=0.001)
+        nr_employed = st.number_input('Çalışan Sayısı', value=5191.0, step=1.0)
+
+    # Predict butonu
+    if st.button('Tahmin Et'):
+        try:
+            # Veriyi DataFrame'e dönüştür
+            input_data = pd.DataFrame({
+                'age': [age],
+                'job': [job],
+                'marital': [marital],
+                'education': [education],
+                'default': [default],
+                'housing': [housing],
+                'loan': [loan],
+                'contact': [contact],
+                'month': [month],
+                'day_of_week': [day_of_week],
+                'campaign': [campaign],
+                'pdays': [pdays],
+                'previous': [previous],
+                'poutcome': [poutcome],
+                'emp.var.rate': [emp_var_rate],
+                'cons.price.idx': [cons_price_idx],
+                'cons.conf.idx': [cons_conf_idx],
+                'euribor3m': [euribor3m],
+                'nr.employed': [nr_employed]
+            })
             
-        with col2:
-            st.subheader("Secondary Features")
-            campaign = st.number_input("Number of Contacts", min_value=1, max_value=50, value=1,
-                                     help="Number of contacts performed during this campaign for this client")
-            education = st.selectbox("Education", options=["basic.4y", "basic.6y", "basic.9y", 
-                                                         "high.school", "illiterate", 
-                                                         "professional.course", "university.degree", 
-                                                         "unknown"])
-            day_of_week = st.selectbox("Day of Week", options=["mon", "tue", "wed", "thu", "fri"])
-            emp_var_rate = st.number_input("Employment Variation Rate", 
-                                         min_value=-5.0, max_value=5.0, value=0.0, step=0.1,
-                                         help="Employment variation rate - quarterly indicator")
+            # Veri ön işleme
+            processed_data = prepare_input_data(input_data)
             
-        # Less important features in an expander
-        with st.expander("Additional Features"):
-            marital = st.selectbox("Marital Status", options=["married", "divorced", "single"])
-            cons_conf_idx = st.number_input("Consumer Confidence Index", 
-                                          min_value=-100.0, max_value=100.0, value=0.0, step=0.1)
+            # Tahmin
+            prediction = model.predict(processed_data)
+            probability = model.predict_proba(processed_data)
             
-        # Create input dictionary with all required features
-        input_data = {
-            'euribor3m': euribor3m,
-            'age': age,
-            'job': job,
-            'nr.employed': nr_employed,
-            'campaign': campaign,
-            'education': education,
-            'day_of_week': day_of_week,
-            'emp.var.rate': emp_var_rate,
-            'marital': marital,
-            'cons.conf.idx': cons_conf_idx,
-        }
-        
-        # Create DataFrame
-        input_df = pd.DataFrame([input_data])
-        
-        # Add debug information
-        with st.expander("Debug Information"):
-            st.write("Input Features:")
-            st.write(input_df.columns.tolist())
-            if model is not None:
-                st.write("Expected Features:")
-                if hasattr(model, 'feature_names_in_'):
-                    st.write(model.feature_names_in_.tolist())
-        
-        # Prediction Button
-        if st.button("Make Prediction"):
-            try:
-                prediction = model.predict(input_df)
-                prediction_proba = model.predict_proba(input_df)
+            # Sonuçları göster
+            if prediction[0] == 1:
+                st.success('Tahmin: Müşteri vadeli mevduat ürününü satın alma olasılığı YÜKSEK')
+            else:
+                st.error('Tahmin: Müşteri vadeli mevduat ürününü satın alma olasılığı DÜŞÜK')
                 
-                # Display prediction with probability
-                if prediction[0] == 'yes':
-                    st.success(f"Prediction: Customer is likely to subscribe! ✅ \
-                             (Confidence: {prediction_proba[0][1]:.2%})")
-                else:
-                    st.info(f"Prediction: Customer is unlikely to subscribe ❌ \
-                           (Confidence: {prediction_proba[0][0]:.2%})")
-                    
-            except Exception as e:
-                st.error(f"An error occurred during prediction: {str(e)}")
-                st.error("Please ensure all required features are provided and in the correct format.")
+            st.write(f'Satın alma olasılığı: {probability[0][1]:.2%}')
+            
+            # Debug bilgisi (geliştirme aşamasında yararlı olabilir)
+            if st.checkbox('Debug bilgisini göster'):
+                st.write("İşlenmiş veri:")
+                st.write(processed_data)
+                
+        except Exception as e:
+            st.error(f"Tahmin yapılırken bir hata oluştu: {e}")
 
-elif st.session_state.current_page == "Ask Model":
-    st.title("Ask the Model")
-    
-    if data is not None and model is not None:
-        st.write("This section allows you to randomly select a row from the dataset and let the model predict the outcome.")
-        
-        if st.button("Select Random Row"):
-            random_index = random.randint(0, len(data) - 1)
-            selected_row = data.iloc[random_index]
-            
-            st.write("### Selected Row:")
-            st.write(selected_row)
-            
-            # Prepare input for prediction
-            input_data = selected_row.drop('y')
-            input_df = input_data.to_frame().T
-            
-            try:
-                prediction = model.predict(input_df)
-                st.success(f"Model Prediction: {prediction[0]}")
-                st.info(f"Actual Value: {selected_row['y']}")
-            except Exception as e:
-                st.error(f"An error occurred during prediction: {e}")
+if __name__ == '__main__':
+    main()
